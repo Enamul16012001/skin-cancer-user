@@ -1,5 +1,5 @@
-/Dataset/HAM10000_images_part_1/*.*
-/Dataset/HAM10000_images_part_2/*.*
+/Dataset/HAM10000_images_part_1/*
+/Dataset/HAM10000_images_part_2/*
 /Dataset/train_image/*
 /Dataset/train/*
 /Dataset/test/*
