@@ -1,3 +1,10 @@
+/Dataset/HAM10000_images_part_1/*
+!/Dataset/HAM10000_images_part_1/.gitkeep
+
+/Dataset/HAM10000_images_part_2/*
+!/Dataset/HAM10000_images_part_2/.gitkeep
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
