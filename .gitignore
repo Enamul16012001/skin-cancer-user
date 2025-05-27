@@ -1,9 +1,8 @@
-/Dataset/HAM10000_images_part_1/*
-!/Dataset/HAM10000_images_part_1/.gitkeep
-
-/Dataset/HAM10000_images_part_2/*
-!/Dataset/HAM10000_images_part_2/.gitkeep
-
+/Dataset/HAM10000_images_part_1/*.*
+/Dataset/HAM10000_images_part_2/*.*
+/Dataset/train_image/*
+/Dataset/train/*
+/Dataset/test/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
