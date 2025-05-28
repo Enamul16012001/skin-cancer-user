@@ -39,6 +39,27 @@ Install Dependencies:
 pip install -r requirements.txt
 ```
 
+### Training the Model
+
+To train the model, run the training script:
+
+#### On Windows:
+```bash
+python train.py
+```
+
+#### On Ubuntu/Linux:
+```bash
+python3 train.py
+```
+
+If you encounter any issues on Ubuntu, ensure you have proper permissions:
+```bash
+chmod +x train.py
+python3 train.py
+```
+
+
 ## Docker Setup
 
 ### Building the Docker Image
