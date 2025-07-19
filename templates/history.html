@@ -192,6 +192,21 @@
             opacity: 0.9;
         }
 
+        .delete-btn {
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 12px;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .delete-btn:hover {
+            opacity: 0.9;
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -296,6 +311,7 @@
                 <span class="user-info">Welcome, {{ user.email }}</span>
                 <a href="/dashboard">Dashboard</a>
                 <a href="/history" class="active">History</a>
+                <a href="/account">Account</a>
                 <a href="/logout">Logout</a>
             </div>
         </div>
@@ -338,6 +354,9 @@
                     <div class="prediction-actions">
                         <button class="view-btn" onclick="openModal('{{ prediction.image_filename }}', '{{ prediction.predicted_class }}', '{{ prediction.confidence }}', '{{ prediction.created_at }}')">
                             🔍 View Details
+                        </button>
+                        <button class="delete-btn" onclick="deletePrediction({{ prediction.id }})">
+                            🗑️ Delete
                         </button>
                     </div>
                 </div>
@@ -401,6 +420,29 @@
                 element.textContent = (confidence * 100).toFixed(1);
             });
         });
+
+        function deletePrediction(predictionId) {
+            if (confirm('Are you sure you want to delete this prediction? This action cannot be undone.')) {
+                fetch(`/delete-prediction/${predictionId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload(); // Refresh the page to show updated list
+                    } else {
+                        alert('Failed to delete prediction');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Failed to delete prediction');
+                });
+            }
+        }
 
         function openModal(imageFilename, predictedClass, confidence, createdAt) {
             const modal = document.getElementById('predictionModal');
