@@ -1,14 +1,20 @@
-from fastapi import FastAPI, File, UploadFile, Request, Form
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, File, UploadFile, Request, Form, HTTPException, Depends, Cookie
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from torchvision import models, transforms
 import torch
 from PIL import Image
 import io
 import uvicorn
 import os
+import uuid
+from datetime import datetime, timedelta
+import jwt
+from typing import Optional
 from model import create_model
+from database import Database
 
 CLASS_NAMES = [
     "Actinic Keratoses and Intraepithelial Carcinoma (akiec)",
@@ -19,22 +25,32 @@ CLASS_NAMES = [
     "Melanocytic Nevi (nv)",
     "Vascular Lesions (vasc)"
 ]
+
 NUM_CLASSES = len(CLASS_NAMES)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# JWT Secret key (in production, use environment variable)
+SECRET_KEY = "your-secret-key-here-change-in-production"
+ALGORITHM = "HS256"
+
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+security = HTTPBearer(auto_error=False)
+
+# Create uploads directory if it doesn't exist
+os.makedirs("static/uploads", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Initialize database
+db = Database()
+
+# Load model
 output_shape = 7
-
 model = create_model(output_shape=output_shape, device=device)
-
 model.load_state_dict(torch.load("efficientnetb3_model.pth", map_location=torch.device(device)))
 model.eval()
 
 image_size = (224, 224)
-
 transform = transforms.Compose([
     transforms.Resize(image_size),
     transforms.ToTensor(),
@@ -42,17 +58,122 @@ transform = transforms.Compose([
                          std=[0.229, 0.224, 0.225])
 ])
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "prediction": ""})
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(hours=24)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+def get_token_from_cookie(request: Request) -> Optional[str]:
+    """Extract token from cookie"""
+    token = request.cookies.get("access_token")
+    if token and token.startswith("Bearer "):
+        return token[7:]  # Remove "Bearer " prefix
+    return None
+
+def verify_token(request: Request):
+    token = get_token_from_cookie(request)
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: int = payload.get("user_id")
+        if user_id is None:
+            return None
+        return user_id
+    except jwt.PyJWTError:
+        return None
+
+def get_current_user(request: Request):
+    user_id = verify_token(request)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = db.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+def get_current_user_optional(request: Request):
+    user_id = verify_token(request)
+    if user_id is None:
+        return None
+    return db.get_user_by_id(user_id)
+
+@app.get("/", response_class=HTMLResponse)
+async def landing_page(request: Request):
+    current_user = get_current_user_optional(request)
+    if current_user:
+        return RedirectResponse(url="/dashboard", status_code=302)
+    return templates.TemplateResponse("landing.html", {"request": request})
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    current_user = get_current_user_optional(request)
+    if current_user:
+        return RedirectResponse(url="/dashboard", status_code=302)
+    return templates.TemplateResponse("register.html", {"request": request, "error": ""})
+
+@app.post("/register", response_class=HTMLResponse)
+async def register_user(request: Request, email: str = Form(...), password: str = Form(...), confirm_password: str = Form(...)):
+    if password != confirm_password:
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Passwords do not match"})
+    
+    if len(password) < 6:
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Password must be at least 6 characters long"})
+    
+    success = db.create_user(email, password)
+    if not success:
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Email already exists"})
+    
+    return templates.TemplateResponse("register.html", {"request": request, "success": "Account created successfully! Please login."})
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    current_user = get_current_user_optional(request)
+    if current_user:
+        return RedirectResponse(url="/dashboard", status_code=302)
+    return templates.TemplateResponse("login.html", {"request": request, "error": ""})
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_user(request: Request, email: str = Form(...), password: str = Form(...)):
+    user_id = db.verify_user(email, password)
+    if not user_id:
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid email or password"})
+    
+    access_token = create_access_token(data={"user_id": user_id})
+    response = RedirectResponse(url="/dashboard", status_code=302)
+    response.set_cookie(
+        key="access_token", 
+        value=f"Bearer {access_token}", 
+        httponly=True, 
+        max_age=86400,
+        secure=False,  # Set to True in production with HTTPS
+        samesite="lax"
+    )
+    return response
+
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse(url="/", status_code=302)
+    response.delete_cookie("access_token")
+    return response
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    current_user = get_current_user(request)
+    return templates.TemplateResponse("dashboard.html", {"request": request, "user": current_user, "prediction": ""})
 
 @app.post("/predict", response_class=HTMLResponse)
 async def predict(request: Request, file: UploadFile = File(...)):
+    current_user = get_current_user(request)
     contents = await file.read()
 
-    image_path = f"static/uploaded_image.jpg"
+    # Generate unique filename
+    file_extension = os.path.splitext(file.filename)[1]
+    unique_filename = f"{uuid.uuid4()}{file_extension}"
+    image_path = f"static/uploads/{unique_filename}"
+    
     with open(image_path, "wb") as f:
         f.write(contents)
 
@@ -63,10 +184,29 @@ async def predict(request: Request, file: UploadFile = File(...)):
         outputs = model(img_tensor)
         probs = torch.nn.functional.softmax(outputs[0], dim=0)
         pred_idx = torch.argmax(probs).item()
+        confidence = probs[pred_idx].item()
         prediction = CLASS_NAMES[pred_idx]
 
-    return templates.TemplateResponse("index.html", {
+    # Save prediction to database
+    db.save_prediction(current_user['id'], unique_filename, prediction, confidence)
+
+    return templates.TemplateResponse("dashboard.html", {
         "request": request,
+        "user": current_user,
         "prediction": f"Predicted Disease: {prediction}",
+        "confidence": f"Confidence: {confidence:.2%}",
         "image_path": "/" + image_path
     })
+
+@app.get("/history", response_class=HTMLResponse)
+async def history(request: Request):
+    current_user = get_current_user(request)
+    predictions = db.get_user_predictions(current_user['id'])
+    return templates.TemplateResponse("history.html", {
+        "request": request, 
+        "user": current_user, 
+        "predictions": predictions
+    })
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
